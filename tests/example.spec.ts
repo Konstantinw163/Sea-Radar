@@ -1,18 +1,20 @@
-import { test, expect } from '@playwright/test';
+import { expect, test } from "@playwright/test";
 
-test('has title', async ({ page }) => {
-  await page.goto('https://playwright.dev/');
+test("selects a vessel and keeps its card open on repeated click", async ({ page }) => {
+  await page.route("https://tile.openstreetmap.org/**", (route) => route.abort());
+  await page.goto("/");
 
-  // Expect a title "to contain" a substring.
-  await expect(page).toHaveTitle(/Playwright/);
-});
+  const markers = page.locator("[data-vessel-id]");
+  await expect(markers).toHaveCount(3);
 
-test('get started link', async ({ page }) => {
-  await page.goto('https://playwright.dev/');
+  const marker = page.locator('[data-vessel-id="demo-1"]');
+  await marker.click();
 
-  // Click the get started link.
-  await page.getByRole('link', { name: 'Get started' }).click();
+  const card = page.getByRole("region", { name: "Карточка судна" });
+  await expect(card).toBeVisible();
+  await expect(card.locator("dd").first()).toHaveText("demo-1");
 
-  // Expects page to have a heading with the name of Installation.
-  await expect(page.getByRole('heading', { name: 'Installation' })).toBeVisible();
+  await marker.click();
+  await expect(card).toBeVisible();
+  await expect(card.locator("dd").first()).toHaveText("demo-1");
 });
