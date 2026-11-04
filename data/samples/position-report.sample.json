@@ -1,0 +1,32 @@
+{
+  "MetaData": {
+    "MMSI": 275525000,
+    "MMSI_String": 275525000,
+    "ShipName": "OPTIMUS",
+    "latitude": 50.98557,
+    "longitude": 1.29016,
+    "time_utc": "2026-11-04 16:06:15.382244806 +0000 UTC"
+  },
+  "MessageType": "PositionReport",
+  "Message": {
+    "PositionReport": {
+      "MessageID": 1,
+      "RepeatIndicator": 0,
+      "UserID": 275525000,
+      "Valid": true,
+      "NavigationalStatus": 0,
+      "RateOfTurn": 0,
+      "Sog": 6.6,
+      "PositionAccuracy": false,
+      "Longitude": 1.290155,
+      "Latitude": 50.98557166666667,
+      "Cog": 228.3,
+      "TrueHeading": 223,
+      "Timestamp": 14,
+      "SpecialManoeuvreIndicator": 0,
+      "Spare": 0,
+      "Raim": false,
+      "CommunicationState": 33342
+    }
+  }
+}
