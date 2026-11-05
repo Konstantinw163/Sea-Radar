@@ -1,0 +1,2 @@
+export const AISSTREAM_WINDOW_MS = 15_000;
+export const AISSTREAM_MAX_VESSELS = 100;

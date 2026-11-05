@@ -2,19 +2,27 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Map as LeafletMap, Marker } from "leaflet";
+import type { Vessel, VesselFields } from "../ais-vessel";
 
-type Vessel = {
-  id: string;
-  name: string;
-  lat: number;
-  lon: number;
-  speedKnots: number;
-  courseDeg: number;
-  timestamp: string;
+type DemoVessel = VesselFields & {
   source: "demo";
   route: readonly (readonly [number, number])[];
   routeIndex: number;
   stopped: boolean;
+};
+
+type DisplayVessel = Vessel | DemoVessel;
+
+type ViewState = "idle-demo" | "loading" | "success" | "empty" | "error";
+
+type SnapshotSuccess = {
+  ok: true;
+  vessels: Vessel[];
+  collectedAt: string;
+  windowSeconds: number;
+  count: number;
+  truncated: boolean;
+  reason: "window_elapsed" | "limit_reached";
 };
 
 const DEMO_TICK_MS = 2000;
@@ -85,6 +93,14 @@ const VESSEL_CONFIG = [
 type VesselConfig = (typeof VESSEL_CONFIG)[number];
 type LatLon = readonly [number, number];
 
+const API_ERROR_MESSAGES: Record<string, string> = {
+  no_api_key: "Ключ AISStream не настроен",
+  connect_failed: "Не удалось подключиться к источнику",
+  provider_error: "Источник вернул ошибку",
+  disconnected: "Соединение с источником разорвано",
+  internal: "Внутренняя ошибка сервера",
+};
+
 function initialBearing(from: LatLon, to: LatLon): number {
   const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
   const toDegrees = (radians: number) => (radians * 180) / Math.PI;
@@ -99,7 +115,7 @@ function initialBearing(from: LatLon, to: LatLon): number {
   return (toDegrees(Math.atan2(y, x)) + 360) % 360;
 }
 
-function createInitialVessels(timestamp: string): Vessel[] {
+function createInitialVessels(timestamp: string): DemoVessel[] {
   return VESSEL_CONFIG.map((config: VesselConfig) => ({
     ...config,
     lat: config.route[0][0],
@@ -112,7 +128,7 @@ function createInitialVessels(timestamp: string): Vessel[] {
   }));
 }
 
-function advanceVessel(vessel: Vessel, timestamp: string): Vessel {
+function advanceVessel(vessel: DemoVessel, timestamp: string): DemoVessel {
   if (vessel.stopped) return vessel;
 
   const nextIndex = vessel.routeIndex + 1;
@@ -144,11 +160,56 @@ function formatCourse(courseDeg: number | null): string {
 
 function formatTimestamp(timestamp: string | null): string {
   if (timestamp === null) return "Нет данных";
-  return `${new Date(timestamp).toISOString().slice(11, 19)} UTC`;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Нет данных";
+  return `${date.toISOString().slice(11, 19)} UTC`;
 }
 
-function formatSource(source: Vessel["source"]): string {
+function formatSource(source: DisplayVessel["source"]): string {
   return source === "demo" ? "Демонстрационные данные" : "AISStream";
+}
+
+function syncMarkers(
+  L: typeof import("leaflet"),
+  map: LeafletMap,
+  markers: Map<string, Marker>,
+  vessels: DisplayVessel[],
+  onSelect: (id: string) => void,
+) {
+  const currentIds = new Set(vessels.map(({ id }) => id));
+  for (const [id, marker] of markers) {
+    if (!currentIds.has(id)) {
+      marker.remove();
+      markers.delete(id);
+    }
+  }
+
+  for (const vessel of vessels) {
+    const marker = markers.get(vessel.id);
+    if (marker) {
+      marker.setLatLng([vessel.lat, vessel.lon]);
+      marker.setIcon(createVesselIcon(L, vessel));
+      continue;
+    }
+
+    const newMarker = L.marker([vessel.lat, vessel.lon], { icon: createVesselIcon(L, vessel) })
+      .addTo(map)
+      .on("click", () => onSelect(vessel.id));
+    markers.set(vessel.id, newMarker);
+  }
+}
+
+function getApiErrorMessage(payload: unknown): string {
+  if (typeof payload === "object" && payload !== null && "error" in payload) {
+    const error = payload.error;
+    if (typeof error === "object" && error !== null && "code" in error) {
+      const code = error.code;
+      if (typeof code === "string" && code in API_ERROR_MESSAGES) {
+        return API_ERROR_MESSAGES[code];
+      }
+    }
+  }
+  return API_ERROR_MESSAGES.internal;
 }
 
 export default function SeaMap() {
@@ -156,9 +217,18 @@ export default function SeaMap() {
   const mapInstance = useRef<LeafletMap | null>(null);
   const markers = useRef(new Map<string, Marker>());
   const leaflet = useRef<typeof import("leaflet") | null>(null);
-  const [vessels, setVessels] = useState<Vessel[]>(() => createInitialVessels(""));
-  const vesselsRef = useRef(vessels);
+  const vesselsRef = useRef<DisplayVessel[]>([]);
+  const loadingRef = useRef(false);
+  const centeredForAisRef = useRef(false);
+  const [viewState, setViewState] = useState<ViewState>("idle-demo");
+  const [vessels, setVessels] = useState<DisplayVessel[]>(() => createInitialVessels(""));
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [snapshotInfo, setSnapshotInfo] = useState<{
+    collectedAt: string;
+    count: number;
+    truncated: boolean;
+  } | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const selectedVessel = vessels.find(({ id }) => id === selectedId) ?? null;
 
   useEffect(() => {
@@ -166,21 +236,30 @@ export default function SeaMap() {
   }, [vessels]);
 
   useEffect(() => {
+    if (viewState !== "idle-demo") return;
+
     const startedAt = new Date().toISOString();
     const startTimestamp = window.setTimeout(() => {
-      setVessels((current) => current.map((vessel) => ({ ...vessel, timestamp: startedAt })));
+      setVessels((current) =>
+        current.map((vessel) =>
+          vessel.source === "demo" ? { ...vessel, timestamp: startedAt } : vessel,
+        ),
+      );
     }, 0);
-
     const timer = window.setInterval(() => {
       const timestamp = new Date().toISOString();
-      setVessels((current) => current.map((vessel) => advanceVessel(vessel, timestamp)));
+      setVessels((current) =>
+        current.map((vessel) =>
+          vessel.source === "demo" ? advanceVessel(vessel, timestamp) : vessel,
+        ),
+      );
     }, DEMO_TICK_MS);
 
     return () => {
       window.clearTimeout(startTimestamp);
       window.clearInterval(timer);
     };
-  }, []);
+  }, [viewState]);
 
   useEffect(() => {
     let disposed = false;
@@ -202,14 +281,7 @@ export default function SeaMap() {
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "© OpenStreetMap contributors",
       }).addTo(map);
-
-      for (const vessel of vesselsRef.current) {
-        const icon = createVesselIcon(L, vessel);
-        const marker = L.marker([vessel.lat, vessel.lon], { icon })
-          .addTo(map)
-          .on("click", () => setSelectedId(vessel.id));
-        mapMarkers.set(vessel.id, marker);
-      }
+      syncMarkers(L, map, mapMarkers, vesselsRef.current, setSelectedId);
     }
 
     void initializeMap();
@@ -226,21 +298,87 @@ export default function SeaMap() {
 
   useEffect(() => {
     const L = leaflet.current;
-    if (!L) return;
-
-    for (const vessel of vessels) {
-      const marker = markers.current.get(vessel.id);
-      if (!marker) continue;
-      marker.setLatLng([vessel.lat, vessel.lon]);
-      marker.setIcon(createVesselIcon(L, vessel));
-    }
+    const map = mapInstance.current;
+    if (!L || !map) return;
+    syncMarkers(L, map, markers.current, vessels, setSelectedId);
   }, [vessels]);
+
+  async function loadRealPositions() {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setViewState("loading");
+    setVessels([]);
+    setSelectedId(null);
+    setSnapshotInfo(null);
+    setStatusMessage(null);
+
+    try {
+      const response = await fetch("/api/snapshot", { cache: "no-store" });
+      const payload: unknown = await response.json();
+      if (!response.ok || typeof payload !== "object" || payload === null || !("ok" in payload) || payload.ok !== true) {
+        setVessels([]);
+        setViewState("error");
+        setStatusMessage(getApiErrorMessage(payload));
+        return;
+      }
+
+      const snapshot = payload as SnapshotSuccess;
+      setVessels(snapshot.vessels);
+      setSnapshotInfo({
+        collectedAt: snapshot.collectedAt,
+        count: snapshot.count,
+        truncated: snapshot.truncated,
+      });
+      if (snapshot.count === 0) {
+        setViewState("empty");
+        setStatusMessage("За время сбора позиции не получены");
+      } else {
+        setViewState("success");
+        if (!centeredForAisRef.current) {
+          mapInstance.current?.setView(MAP_CONFIG.center, MAP_CONFIG.zoom);
+          centeredForAisRef.current = true;
+        }
+      }
+    } catch {
+      setVessels([]);
+      setViewState("error");
+      setStatusMessage(API_ERROR_MESSAGES.connect_failed);
+    } finally {
+      loadingRef.current = false;
+    }
+  }
+
+  let sourceLabel: string;
+  if (viewState === "idle-demo") {
+    sourceLabel = "Демонстрационные данные";
+  } else if (viewState === "loading") {
+    sourceLabel = "Загрузка…";
+  } else if (viewState === "error") {
+    sourceLabel = "Данных на карте нет";
+  } else if (snapshotInfo) {
+    sourceLabel = `AISStream · снимок за 15 с · получен ${formatTimestamp(snapshotInfo.collectedAt)} · судов: ${snapshotInfo.count} · выборка неполная${snapshotInfo.truncated ? " · остановлено на лимите 100" : ""}`;
+  } else {
+    sourceLabel = "Данных на карте нет";
+  }
 
   return (
     <main className="sea-radar">
       <div ref={mapElement} className="sea-radar__map" aria-label="Карта пролива Дувр" />
       <aside className="sea-radar__panel" aria-live="polite">
-        <p className="sea-radar__source">Демонстрационные данные</p>
+        <p className="sea-radar__source">{sourceLabel}</p>
+        {statusMessage && (
+          <p className="sea-radar__message" role={viewState === "error" ? "alert" : "status"}>
+            {viewState === "error" ? `Не удалось получить данные: ${statusMessage}` : statusMessage}
+          </p>
+        )}
+        <button
+          className="sea-radar__button"
+          type="button"
+          disabled={viewState === "loading"}
+          onClick={() => void loadRealPositions()}
+        >
+          Загрузить настоящие позиции
+        </button>
         {selectedVessel && (
           <section className="vessel-card" aria-label="Карточка судна">
             <dl>
@@ -262,13 +400,27 @@ export default function SeaMap() {
   );
 }
 
-function createVesselIcon(L: typeof import("leaflet"), vessel: Vessel) {
+function escapeAttribute(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const escaped: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return escaped[character];
+  });
+}
+
+function createVesselIcon(L: typeof import("leaflet"), vessel: DisplayVessel) {
   const iconName = vessel.courseDeg === null ? "neutral" : "course";
   const rotation = iconName === "course" ? ` style="transform: rotate(${vessel.courseDeg}deg)"` : "";
+  const vesselId = escapeAttribute(vessel.id);
 
   return L.divIcon({
     className: "vessel-icon-container",
-    html: `<span class="vessel-icon vessel-icon--${iconName}" data-vessel-id="${vessel.id}" data-icon="${iconName}"${rotation}></span>`,
+    html: `<span class="vessel-icon vessel-icon--${iconName}" data-vessel-id="${vesselId}" data-icon="${iconName}"${rotation}></span>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
   });
