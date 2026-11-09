@@ -10,7 +10,13 @@ export default defineConfig({
   },
   projects: [
     {
+      name: "node",
+      testMatch: "tests/node/**/*.spec.ts",
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
       name: "chromium",
+      testIgnore: "tests/node/**/*.spec.ts",
       use: {
         ...devices["Desktop Chrome"],
         channel: "chrome",
