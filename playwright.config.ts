@@ -12,7 +12,7 @@ export default defineConfig({
     {
       name: "node",
       testMatch: "tests/node/**/*.spec.ts",
-      use: { ...devices["Desktop Chrome"] },
+      use: {},
     },
     {
       name: "chromium",
