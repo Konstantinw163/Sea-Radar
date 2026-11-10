@@ -13,7 +13,7 @@ type DemoVessel = VesselFields & {
 
 type DisplayVessel = Vessel | DemoVessel;
 
-type ViewState = "idle-demo" | "loading" | "success" | "empty" | "error";
+type DisplayState = "demo" | "ais";
 
 type SnapshotSuccess = {
   ok: true;
@@ -220,7 +220,7 @@ export default function SeaMap() {
   const vesselsRef = useRef<DisplayVessel[]>([]);
   const loadingRef = useRef(false);
   const centeredForAisRef = useRef(false);
-  const [viewState, setViewState] = useState<ViewState>("idle-demo");
+  const [displayState, setDisplayState] = useState<DisplayState>("demo");
   const [vessels, setVessels] = useState<DisplayVessel[]>(() => createInitialVessels(""));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [snapshotInfo, setSnapshotInfo] = useState<{
@@ -228,7 +228,8 @@ export default function SeaMap() {
     count: number;
     truncated: boolean;
   } | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [attemptResult, setAttemptResult] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const selectedVessel = vessels.find(({ id }) => id === selectedId) ?? null;
 
   useEffect(() => {
@@ -236,7 +237,7 @@ export default function SeaMap() {
   }, [vessels]);
 
   useEffect(() => {
-    if (viewState !== "idle-demo") return;
+    if (displayState !== "demo") return;
 
     const startedAt = new Date().toISOString();
     const startTimestamp = window.setTimeout(() => {
@@ -259,7 +260,7 @@ export default function SeaMap() {
       window.clearTimeout(startTimestamp);
       window.clearInterval(timer);
     };
-  }, [viewState]);
+  }, [displayState]);
 
   useEffect(() => {
     let disposed = false;
@@ -306,79 +307,95 @@ export default function SeaMap() {
   async function loadRealPositions() {
     if (loadingRef.current) return;
     loadingRef.current = true;
-    setViewState("loading");
-    setVessels([]);
-    setSelectedId(null);
-    setSnapshotInfo(null);
-    setStatusMessage(null);
+    setIsLoading(true);
+    setAttemptResult("Загрузка…");
 
     try {
       const response = await fetch("/api/snapshot", { cache: "no-store" });
-      const payload: unknown = await response.json();
-      if (!response.ok || typeof payload !== "object" || payload === null || !("ok" in payload) || payload.ok !== true) {
-        setVessels([]);
-        setViewState("error");
-        setStatusMessage(getApiErrorMessage(payload));
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        setAttemptResult("Попытка: не удалось получить данные: Нет ответа сервера");
+        return;
+      }
+
+      if (typeof payload !== "object" || payload === null || !("ok" in payload)) {
+        setAttemptResult("Попытка: не удалось получить данные: Нет ответа сервера");
+        return;
+      }
+
+      if (!response.ok || payload.ok !== true) {
+        const attemptedAt =
+          typeof payload === "object" && payload !== null && "attemptedAt" in payload && typeof payload.attemptedAt === "string"
+            ? payload.attemptedAt
+            : null;
+        const responseMessage =
+          typeof payload === "object" && payload !== null && "error" in payload &&
+          typeof payload.error === "object" && payload.error !== null && "message" in payload.error &&
+          typeof payload.error.message === "string"
+            ? payload.error.message
+            : getApiErrorMessage(payload);
+        setAttemptResult(
+          attemptedAt
+            ? `Попытка ${formatTimestamp(attemptedAt)}: не удалось получить данные: ${responseMessage}`
+            : `Попытка: не удалось получить данные: ${responseMessage}`,
+        );
         return;
       }
 
       const snapshot = payload as SnapshotSuccess;
+      if (snapshot.vessels.length === 0 || snapshot.count === 0) {
+        setAttemptResult(`Попытка ${formatTimestamp(snapshot.collectedAt)}: за время сбора позиции не получены`);
+        return;
+      }
+
       setVessels(snapshot.vessels);
       setSnapshotInfo({
         collectedAt: snapshot.collectedAt,
         count: snapshot.count,
         truncated: snapshot.truncated,
       });
-      if (snapshot.count === 0) {
-        setViewState("empty");
-        setStatusMessage("За время сбора позиции не получены");
-      } else {
-        setViewState("success");
-        if (!centeredForAisRef.current) {
-          mapInstance.current?.setView(MAP_CONFIG.center, MAP_CONFIG.zoom);
-          centeredForAisRef.current = true;
-        }
+      setDisplayState("ais");
+      setSelectedId((current) =>
+        current && snapshot.vessels.some(({ id }) => id === current) ? current : null,
+      );
+      setAttemptResult(`Попытка ${formatTimestamp(snapshot.collectedAt)}: получено судов: ${snapshot.count}`);
+      if (!centeredForAisRef.current) {
+        mapInstance.current?.setView(MAP_CONFIG.center, MAP_CONFIG.zoom);
+        centeredForAisRef.current = true;
       }
     } catch {
-      setVessels([]);
-      setViewState("error");
-      setStatusMessage(API_ERROR_MESSAGES.connect_failed);
+      setAttemptResult("Попытка: не удалось получить данные: Нет ответа сервера");
     } finally {
       loadingRef.current = false;
+      setIsLoading(false);
     }
   }
 
-  let sourceLabel: string;
-  if (viewState === "idle-demo") {
-    sourceLabel = "Демонстрационные данные";
-  } else if (viewState === "loading") {
-    sourceLabel = "Загрузка…";
-  } else if (viewState === "error") {
-    sourceLabel = "Данных на карте нет";
-  } else if (snapshotInfo) {
-    sourceLabel = `AISStream · снимок за 15 с · получен ${formatTimestamp(snapshotInfo.collectedAt)} · судов: ${snapshotInfo.count} · выборка неполная${snapshotInfo.truncated ? " · остановлено на лимите 100" : ""}`;
-  } else {
-    sourceLabel = "Данных на карте нет";
-  }
+  const sourceLabel = displayState === "demo"
+    ? "Демонстрационные данные"
+    : `AISStream · снимок за 15 с · получен ${formatTimestamp(snapshotInfo!.collectedAt)} · судов: ${snapshotInfo!.count} · выборка неполная${snapshotInfo!.truncated ? " · остановлено на лимите 100" : ""}`;
 
   return (
     <main className="sea-radar">
       <div ref={mapElement} className="sea-radar__map" aria-label="Карта пролива Дувр" />
       <aside className="sea-radar__panel" aria-live="polite">
-        <p className="sea-radar__source">{sourceLabel}</p>
-        {statusMessage && (
-          <p className="sea-radar__message" role={viewState === "error" ? "alert" : "status"}>
-            {viewState === "error" ? `Не удалось получить данные: ${statusMessage}` : statusMessage}
-          </p>
-        )}
         <button
           className="sea-radar__button"
           type="button"
-          disabled={viewState === "loading"}
+          disabled={isLoading}
           onClick={() => void loadRealPositions()}
         >
           Загрузить настоящие позиции
         </button>
+        <p className="sea-radar__source">{sourceLabel}</p>
+        {attemptResult && (
+          <p className="sea-radar__message" role={isLoading ? "status" : "alert"}>
+            {attemptResult}
+          </p>
+        )}
+        <p className="sea-radar__message">После обновления страницы снова показываются демонстрационные данные</p>
         {selectedVessel && (
           <section className="vessel-card" aria-label="Карточка судна">
             <dl>

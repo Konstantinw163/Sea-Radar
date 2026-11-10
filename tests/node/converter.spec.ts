@@ -19,7 +19,7 @@ test("converts the saved PositionReport sample to literal values", () => {
 
 test("synthetic missing and whitespace ship names become null", () => {
   const missingName = structuredClone(positionReportSample);
-  delete missingName.MetaData.ShipName;
+  missingName.MetaData.ShipName = undefined as unknown as string;
   expect(toAisVessel(missingName)?.name).toBeNull();
 
   const whitespaceName = structuredClone(positionReportSample);
@@ -35,7 +35,7 @@ test("synthetic optional speed values preserve zero and reject invalid values", 
   }
 
   const missingSpeed = structuredClone(positionReportSample);
-  delete missingSpeed.Message.PositionReport.Sog;
+  missingSpeed.Message.PositionReport.Sog = undefined as unknown as number;
   expect(toAisVessel(missingSpeed)?.speedKnots).toBeNull();
 });
 
@@ -60,7 +60,7 @@ test("synthetic invalid coordinates never create a vessel at zero", () => {
 
 test("synthetic missing or empty MMSI and unparsable time are rejected", () => {
   const missingMmsi = structuredClone(positionReportSample);
-  delete missingMmsi.MetaData.MMSI;
+  missingMmsi.MetaData.MMSI = undefined as unknown as number;
   expect(toAisVessel(missingMmsi)).toBeNull();
 
   const emptyMmsi = structuredClone(positionReportSample);

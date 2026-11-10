@@ -28,7 +28,7 @@ function controllableTimer() {
   let callback: (() => void) | undefined;
   let cleared = 0;
   return {
-    setTimer(fn: () => void) { callback = fn; return 1 as ReturnType<typeof setTimeout>; },
+    setTimer(fn: () => void) { callback = fn; return 1 as unknown as ReturnType<typeof setTimeout>; },
     clearTimer() { cleared += 1; },
     fire() { callback?.(); },
     cleared: () => cleared,

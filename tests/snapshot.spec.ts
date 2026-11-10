@@ -71,7 +71,7 @@ test("loads an AIS snapshot, disables the button while loading, and shows its ca
   await button.click();
   await expect(page.getByText("Загрузка…")).toBeVisible();
   await expect(button).toBeDisabled();
-  await expect(page.locator("[data-vessel-id]")).toHaveCount(0);
+  await expect(page.locator("[data-vessel-id]")).toHaveCount(3);
 
   releaseResponse();
   await expect(page.getByText("AISStream · снимок за 15 с · получен 16:06:17 UTC · судов: 1 · выборка неполная")).toBeVisible();
@@ -91,7 +91,7 @@ test("loads an AIS snapshot, disables the button while loading, and shows its ca
   expect(requestCount).toBe(1);
 });
 
-test("distinguishes an empty snapshot from a no-key error", async ({ page }) => {
+test("empty snapshot preserves demo vessels and reports the attempt separately", async ({ page }) => {
   await blockMapTiles(page);
   await page.route("**/api/snapshot", async (route) => {
     await route.fulfill({
@@ -101,12 +101,12 @@ test("distinguishes an empty snapshot from a no-key error", async ({ page }) => 
   });
   await page.goto("/");
   await page.getByRole("button", { name: "Загрузить настоящие позиции" }).click();
-  await expect(page.getByText("AISStream · снимок за 15 с · получен 16:06:17 UTC · судов: 0 · выборка неполная")).toBeVisible();
-  await expect(page.getByText("За время сбора позиции не получены")).toBeVisible();
-  await expect(page.locator("[data-vessel-id]")).toHaveCount(0);
+  await expect(page.locator(".sea-radar__source")).toHaveText("Демонстрационные данные");
+  await expect(page.locator(".sea-radar__message").first()).toHaveText("Попытка 16:06:17 UTC: за время сбора позиции не получены");
+  await expect(page.locator("[data-vessel-id]")).toHaveCount(3);
 });
 
-test("shows the fixed no-key error and clears the map", async ({ page }) => {
+test("no-key error preserves demo vessels and reports the attempt", async ({ page }) => {
   await blockMapTiles(page);
   await page.route("**/api/snapshot", async (route) => {
     await route.fulfill({
@@ -120,7 +120,7 @@ test("shows the fixed no-key error and clears the map", async ({ page }) => {
   });
   await page.goto("/");
   await page.getByRole("button", { name: "Загрузить настоящие позиции" }).click();
-  await expect(page.getByText("Данных на карте нет")).toBeVisible();
-  await expect(page.getByText("Не удалось получить данные: Ключ AISStream не настроен")).toBeVisible();
-  await expect(page.locator("[data-vessel-id]")).toHaveCount(0);
+  await expect(page.locator(".sea-radar__source")).toHaveText("Демонстрационные данные");
+  await expect(page.locator(".sea-radar__message").first()).toHaveText("Попытка 16:06:17 UTC: не удалось получить данные: Ключ AISStream не настроен");
+  await expect(page.locator("[data-vessel-id]")).toHaveCount(3);
 });

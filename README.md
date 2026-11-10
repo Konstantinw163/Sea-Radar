@@ -1,34 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sea Radar
 
-## Getting Started
+Учебное приложение для показа карты пролива Дувр и демонстрационных/полученных по запросу AIS-позиций. Это учебное пособие, не средство реальной навигации.
 
-First, run the development server:
+## Требования
+
+- Windows, macOS или Linux
+- Node.js 24 и npm
+- Интернет для базовой карты OpenStreetMap и для попытки получить данные AISStream
+
+## Установка и запуск
+
+В PowerShell, терминале или Git Bash перейдите в каталог проекта и установите зависимости по lock-файлу:
+
+```bash
+npm ci
+```
+
+Для загрузки AIS-позиций создайте в корне проекта локальный файл `.env.local` и задайте в нём переменную `AISSTREAM_API_KEY`. Значение ключа предоставляется владельцем и не должно добавляться в репозиторий, README, архивы или снимки экрана. Без ключа карта и демонстрационные суда работают; нажатие кнопки покажет результат неудачной попытки.
+
+Запустите локальный сервер:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Откройте <http://localhost:3000>. Сервер привязан к локальному компьютеру; приложение не предназначено для доступа извне.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Проверки проекта
 
-## Learn More
+```bash
+npm test
+npx tsc --noEmit
+npm run build
+npm run lint
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Как читать карту и результат загрузки
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+При открытии страницы показываются демонстрационные суда. Нажатие кнопки запрашивает один AIS-снимок; это снимок на момент нажатия, а не мониторинг и не непрерывное обновление. Полученная выборка неполная: отображаются позиции, полученные за ограниченное время сбора и в пределах лимита источника, а не все суда района.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Пока идёт запрос, ранее показанный набор и его подпись сохраняются. Если ответ пустой или произошла ошибка, прежняя картина не заменяется; отдельная строка сообщает исход последней попытки и время из ответа сервера. Поэтому время подписи сохранённого снимка может быть старше времени последней попытки. Только непустой успешный результат заменяет набор и останавливает движение демонстрационных судов.
 
-## Deploy on Vercel
+После обновления страницы снова показываются демонстрационные данные. Снимки не сохраняются между перезагрузками и не объединяются; отсутствие судна в следующем наборе само по себе не означает, что оно покинуло район. Доступность AISStream и число полученных позиций зависят от внешнего источника и не гарантируются.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Ограничения
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Один фиксированный район — пролив Дувр; настоящие позиции загружаются только по кнопке.
+- Демонстрационные суда движутся по заданным маршрутам; настоящие суда остаются в координатах полученного снимка.
+- Нет истории снимков, автоматического обновления, фильтрации или сохранения набора после обновления страницы.
+- Для карты и AISStream требуется интернет. Без ключа AISStream реальные позиции недоступны.
+- Данные предназначены только для учебного показа, не для навигации.

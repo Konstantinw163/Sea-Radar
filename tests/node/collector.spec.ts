@@ -83,7 +83,7 @@ test("100 reports for one vessel continue until the managed window timer fires",
       setTimer(callback, delay) {
         timerDelay = delay;
         fireWindow = callback;
-        return 1 as ReturnType<typeof setTimeout>;
+        return 1 as unknown as ReturnType<typeof setTimeout>;
       },
       clearTimer() { clearedTimers += 1; },
     }),
@@ -146,7 +146,7 @@ test("provider errors and disconnects after three positions reject the partial s
       createSocket: () => socket,
       setTimer(callback) {
         timerCallback = callback;
-        return 1 as ReturnType<typeof setTimeout>;
+        return 1 as unknown as ReturnType<typeof setTimeout>;
       },
       clearTimer() { clearedTimers += 1; },
     });
